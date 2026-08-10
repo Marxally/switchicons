@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Switch Icons — Nintendo Switch Icon Archive</title>
+<meta name="description" content="An unofficial, fan-made archive of every Nintendo Switch game icon, cataloged and searchable.">
+<link rel="preconnect" href="https://img-eshop.cdn.nintendo.net">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='2' y='2' width='16' height='16' rx='5' fill='%23E60012'/%3E%3Crect x='22' y='2' width='16' height='16' rx='5' fill='%2300C3E3'/%3E%3Crect x='2' y='22' width='16' height='16' rx='5' fill='%23212126'/%3E%3Crect x='22' y='22' width='16' height='16' rx='5' fill='%238A8A93'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#" id="brand-home" aria-label="Switch Icons — back to top">
+      <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="2" y="2" width="16" height="16" rx="5" class="m1"/>
+        <rect x="22" y="2" width="16" height="16" rx="5" class="m2"/>
+        <rect x="2" y="22" width="16" height="16" rx="5" class="m3"/>
+        <rect x="22" y="22" width="16" height="16" rx="5" class="m4"/>
+      </svg>
+      <div class="brand-text">
+        <h1>Switch Icons</h1>
+        <p class="brand-tag">Every base-game icon on the eShop, archived</p>
+      </div>
+    </a>
+    <div class="status-readout" id="status-readout">
+      <span id="count-visible">—</span><span class="status-sep">/</span><span id="count-total">—</span>
+      <span class="status-label">tiles</span>
+    </div>
+  </div>
+</header>
+
+<section class="controls">
+  <div class="controls-inner">
+    <div class="search-row">
+      <div class="search-field">
+        <input type="text" id="search-input" placeholder="Search by title…" autocomplete="off" spellcheck="false">
+        <kbd id="search-hint" aria-hidden="true">/</kbd>
+        <button id="search-clear" type="button" aria-label="Clear search" hidden>&times;</button>
+      </div>
+      <select id="sort-select" aria-label="Sort order">
+        <option value="name-asc">Name A–Z</option>
+        <option value="name-desc">Name Z–A</option>
+        <option value="date-desc">Newest first</option>
+        <option value="date-asc">Oldest first</option>
+      </select>
+      <button id="random-btn" type="button" title="Jump to a random title">🎲 Random</button>
+    </div>
+    <div class="chip-row-wrap">
+      <div class="chip-row" id="chip-row" aria-label="Filter by category"></div>
+      <button id="clear-filters" type="button" hidden>Clear filters ✕</button>
+    </div>
+  </div>
+</section>
+
+<main class="grid-wrap">
+  <div id="scroller">
+    <div id="sizer">
+      <div id="window" role="list"></div>
+    </div>
+  </div>
+  <div id="empty-state" hidden>
+    <div class="empty-tile" aria-hidden="true"></div>
+    <p>Nothing matches <span id="empty-query"></span>. Try a different title, or clear your filters.</p>
+    <button id="empty-clear">Clear search</button>
+  </div>
+  <nav id="az-rail" aria-label="Jump to letter"></nav>
+  <button id="back-to-top" type="button" aria-label="Back to top" hidden>↑</button>
+</main>
+
+<div id="modal-backdrop" hidden>
+  <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button id="modal-close" aria-label="Close">&times;</button>
+    <img id="modal-icon" alt="">
+    <div class="modal-body">
+      <h2 id="modal-title"></h2>
+      <dl class="modal-meta">
+        <div><dt>Publisher</dt><dd id="modal-pub"></dd></div>
+        <div><dt>Released</dt><dd id="modal-date"></dd></div>
+        <div><dt>Categories</dt><dd id="modal-cats"></dd></div>
+        <div><dt>Title ID</dt><dd id="modal-id"></dd></div>
+      </dl>
+      <a id="modal-open" target="_blank" rel="noopener">Open original image ↗</a>
+    </div>
+  </div>
+</div>
+
+<footer class="site-footer">
+  <p>Switch Icons is an unofficial fan archive, not affiliated with or endorsed by Nintendo. Icons are hotlinked directly from Nintendo's eShop CDN and remain the property of Nintendo and their respective publishers — nothing is rehosted here. Metadata courtesy of the open-source <a href="https://github.com/blawar/titledb" target="_blank" rel="noopener">titledb</a> project.</p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
