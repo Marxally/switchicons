@@ -5,16 +5,20 @@ Regenerates data.json for the Switch Icons site from two sources:
 1. titledb (https://github.com/blawar/titledb, MIT licensed) — the primary
    source, covering ~18,800 original Nintendo Switch base games. Its data
    comes from dumped/cracked game files, which is why it's extremely
-   thorough for Switch 1 but has almost nothing for Switch 2 (only ~26
-   titles as of writing) — Switch 2 isn't meaningfully crackable yet, so
-   there's very little for that community to have dumped and cataloged.
+   thorough for Switch 1 but has almost nothing for Switch 2 — Switch 2
+   isn't meaningfully crackable yet, so there's very little for that
+   community to have dumped and cataloged.
 
-2. Nintendo.com's own game-search backend (an Algolia index that powers
-   the search/filter UI on nintendo.com) — used here specifically to
-   backfill Switch 2 titles, since it's driven by Nintendo's official
-   catalog rather than dumped files and has the full ~350+ Switch 2
-   library. Endpoint/fields confirmed against the open-source
-   nintendo-switch-eshop library (github.com/lmmfranco/nintendo-switch-eshop).
+2. Nintendo.com's own live product-search backend (an Algolia index called
+   "store_all_products_en_us" that powers search on nintendo.com today) —
+   used here specifically to backfill Switch 2 titles, since it's driven by
+   Nintendo's official catalog rather than dumped files. An older sibling
+   index ("ncom_game_en_us") was tried first but turned out to be a stale,
+   abandoned snapshot from before Switch 2 existed (confirmed by its total
+   size and by direct title searches returning nothing relevant) — kept
+   here only as a last-resort fallback. Endpoint/fields confirmed against
+   the actively maintained fork of nintendo-switch-eshop
+   (github.com/favna/nintendo-switch-eshop).
 
 Titles found in both sources are deduped by normalized name, preferring
 titledb's richer metadata when a title appears in both.
@@ -33,16 +37,19 @@ ICON_PREFIX = "https://img-eshop.cdn.nintendo.net/i/"
 ICON_SUFFIX = ".jpg"
 
 ALGOLIA_APP_ID = "U3B6GR4UA3"
-ALGOLIA_API_KEY = "c4da8be7fd29f0f5bfa42920b0a99dc7"
-ALGOLIA_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/*/queries"
-ALGOLIA_INDEX = "ncom_game_en_us_title_asc"
 
-# A second, more restricted key/endpoint the nintendo.com site uses for its
-# search-as-you-type box, hitting a single index directly rather than the
-# multi-query browse endpoint. Might be kept more current than the sorted
-# browse indices, so we try it as a fallback / diagnostic.
-QUERIED_ALGOLIA_KEY = "6efbfb0f8f80defc44895018caf77504"
-QUERIED_ALGOLIA_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/ncom_game_en_us/query"
+# Current, actively-maintained index (as of this writing) that backs
+# nintendo.com's live product search. Uses Algolia's plain single-index
+# /query REST endpoint — body is just the search params as JSON directly.
+NEW_INDEX_NAME = "store_all_products_en_us"
+NEW_INDEX_KEY = "a29c6927638bfd8cee23993e51e721c9"
+NEW_INDEX_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{NEW_INDEX_NAME}/query"
+
+# Older index/endpoint, confirmed stale (frozen pre-Switch-2, ~9k entries)
+# but kept as a fallback attempt in case the new index ever changes shape.
+OLD_INDEX_NAME = "ncom_game_en_us"
+OLD_INDEX_KEY = "6efbfb0f8f80defc44895018caf77504"
+OLD_INDEX_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{OLD_INDEX_NAME}/query"
 
 
 def fetch_titledb(region):
@@ -73,118 +80,57 @@ def parse_release_date(display):
     return 0
 
 
-def _algolia_query(params_dict, index_name=None):
-    """Low-level POST to the Algolia multi-query endpoint. Returns the raw
-    parsed response for the (single) request we send."""
-    params = urllib.parse.urlencode(params_dict)
-    body = json.dumps({"requests": [{"indexName": index_name or ALGOLIA_INDEX, "params": params}]}).encode("utf-8")
+def _index_query(url, api_key, body_dict, timeout=60):
+    """POST to an Algolia single-index /query endpoint. Body is sent as
+    plain JSON (this newer-style endpoint doesn't use the urlencoded
+    'params' string wrapper the older multi-query endpoint needs)."""
+    body = json.dumps(body_dict).encode("utf-8")
     req = urllib.request.Request(
-        ALGOLIA_URL,
+        url,
         data=body,
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-Algolia-API-Key": ALGOLIA_API_KEY,
+            "X-Algolia-API-Key": api_key,
             "X-Algolia-Application-Id": ALGOLIA_APP_ID,
         },
     )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        payload = json.load(resp)
-    return payload.get("results", [{}])[0]
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.load(resp)
 
 
-def _algolia_text_search(query_text, hits_per_page=3):
-    """Hits the single-index /query endpoint (what nintendo.com's search
-    box itself uses) with a plain text query, via the more restricted
-    'queried' API key. Used only as a diagnostic to see whether a specific
-    known title exists in this dataset and what its raw fields look like."""
-    params = urllib.parse.urlencode({"hitsPerPage": hits_per_page, "page": 0, "query": query_text})
-    body = json.dumps({"params": params}).encode("utf-8")
-    req = urllib.request.Request(
-        QUERIED_ALGOLIA_URL,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "X-Algolia-API-Key": QUERIED_ALGOLIA_KEY,
-            "X-Algolia-Application-Id": ALGOLIA_APP_ID,
-        },
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        payload = json.load(resp)
-    return payload.get("hits", [])
+def discover_switch2_facet(url, api_key, facet_names=("platformCode", "platform", "corePlatforms")):
+    """Ask Algolia for the full breakdown of candidate platform-ish facets
+    (empty query = match everything) rather than guessing Nintendo's exact
+    label for Switch 2. Returns (facet_name, value) or (None, None)."""
+    result = _index_query(url, api_key, {
+        "query": "",
+        "hitsPerPage": 0,
+        "facets": list(facet_names),
+    })
+    total = result.get("nbHits", 0)
+    facets = result.get("facets", {})
+    print(f"[{url}] nbHits={total} facets={ {k: v for k, v in facets.items()} }")
 
-
-def run_diagnostics():
-    """Prints as much information as we can gather in one shot about how
-    Switch 2 titles are (or aren't) represented in Nintendo's search
-    backend, so we don't have to burn a full round-trip per guess."""
-    print("--- DIAGNOSTICS ---")
-
-    for index_name in (ALGOLIA_INDEX, "ncom_game_en_us"):
-        try:
-            result = _algolia_query(
-                {"hitsPerPage": 0, "page": 0, "analytics": "false", "facets": json.dumps(["platform"])},
-                index_name=index_name,
-            )
-            print(f"[{index_name}] nbHits={result.get('nbHits')} platform facets={result.get('facets', {}).get('platform', {})}")
-        except Exception as e:
-            print(f"[{index_name}] facet query failed: {e}")
-
-    for title in ("Mario Kart World", "Donkey Kong Bananza"):
-        try:
-            hits = _algolia_text_search(title)
-            if not hits:
-                print(f"[text search] {title!r} -> no hits")
-            for h in hits[:1]:
-                print(f"[text search] {title!r} -> title={h.get('title')!r} platform={h.get('platform')!r} boxart={h.get('boxart')!r} nsuid={h.get('nsuid')!r}")
-        except Exception as e:
-            print(f"[text search] {title!r} failed: {e}")
-
-    print("--- END DIAGNOSTICS ---")
-
-
-def discover_platform_facet_for_switch2():
-    """We don't actually know Nintendo's exact label for Switch 2 in this
-    index (could be "Nintendo Switch 2", could have a trademark symbol,
-    could be something else entirely) — rather than guess, ask Algolia for
-    the full breakdown of the 'platform' facet and pick whichever value
-    looks like Switch 2. Tries a couple of candidate index names since the
-    sorted browse indices may lag the plain search index. Returns
-    (index_name, platform_label) or (None, None)."""
-    for index_name in (ALGOLIA_INDEX, "ncom_game_en_us"):
-        try:
-            result = _algolia_query(
-                {"hitsPerPage": 0, "page": 0, "analytics": "false", "facets": json.dumps(["platform"])},
-                index_name=index_name,
-            )
-        except Exception as e:
-            print(f"WARNING: facet discovery against {index_name!r} failed: {e}")
-            continue
-
-        total = result.get("nbHits", 0)
-        facet_counts = result.get("facets", {}).get("platform", {})
-        print(f"[{index_name}] {total} total hits with no filter; platform facet values: {facet_counts}")
-
-        candidates = [k for k in facet_counts if "switch" in k.lower() and "2" in k]
+    for facet_name in facet_names:
+        values = facets.get(facet_name, {})
+        candidates = [k for k in values if "switch" in k.lower() and "2" in k]
         if candidates:
-            best = max(candidates, key=lambda k: facet_counts[k])
-            print(f"Using index {index_name!r}, platform facet {best!r} ({facet_counts[best]} hits)")
-            return index_name, best
+            best = max(candidates, key=lambda k: values[k])
+            print(f"Using facet {facet_name!r} = {best!r} ({values[best]} hits) on {url}")
+            return facet_name, best
 
-    print("WARNING: no platform facet value looked like Switch 2 in any index tried")
+    print(f"No Switch-2-shaped facet value found at {url}")
     return None, None
 
 
-def fetch_nintendo_platform(platform_label, index_name, hits_per_page=1000):
-    """Queries Nintendo's own site-search index for a given platform facet
-    value. Returns the raw list of hit dicts."""
-    result = _algolia_query({
+def fetch_by_facet(url, api_key, facet_name, value, hits_per_page=1000):
+    result = _index_query(url, api_key, {
+        "query": "",
         "hitsPerPage": hits_per_page,
         "page": 0,
-        "analytics": "false",
-        "facetFilters": json.dumps([[f"platform:{platform_label}"]]),
-    }, index_name=index_name)
+        "facetFilters": [[f"{facet_name}:{value}"]],
+    })
     return result.get("hits", [])
 
 
@@ -193,15 +139,21 @@ def switch2_supplement(existing_names):
     what titledb is missing. Returns [] on any failure (or if we can't
     confidently identify the right platform facet) rather than breaking
     the whole build — this is a supplement, not the primary source."""
-    run_diagnostics()
-    try:
-        index_name, platform_label = discover_platform_facet_for_switch2()
-        if not platform_label:
-            return []
-        hits = fetch_nintendo_platform(platform_label, index_name)
-        print(f"Nintendo.com search returned {len(hits)} hits for platform {platform_label!r} in index {index_name!r}")
-    except Exception as e:
-        print(f"WARNING: Switch 2 supplement fetch failed, skipping it ({e})", file=sys.stderr)
+    hits = []
+    for url, key in ((NEW_INDEX_URL, NEW_INDEX_KEY), (OLD_INDEX_URL, OLD_INDEX_KEY)):
+        try:
+            facet_name, value = discover_switch2_facet(url, key)
+            if not facet_name:
+                continue
+            hits = fetch_by_facet(url, key, facet_name, value)
+            print(f"Fetched {len(hits)} hits for {facet_name}={value!r} from {url}")
+            if hits:
+                break
+        except Exception as e:
+            print(f"WARNING: query against {url} failed: {e}", file=sys.stderr)
+
+    if not hits:
+        print("Switch 2 supplement: no usable data found from any source, skipping")
         return []
 
     out = []
