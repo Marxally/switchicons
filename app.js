@@ -4,6 +4,7 @@
   var ICON_PREFIX = "https://img-eshop.cdn.nintendo.net/i/";
   var ICON_SUFFIX = ".jpg";
   var GAP = 6;
+  var GRID_PAD = 8; // horizontal breathing room so hover-scaled edge tiles don't clip against overflow:hidden
   var BUFFER_ROWS = 3;
 
   var els = {
@@ -66,6 +67,16 @@
     });
   }
 
+  // Official Nintendo titles are full of ™/®/© marks and accented characters
+  // ("Mario Kart™ World", "Pokémon") that nobody types when searching. Strip
+  // those out (and fold accents) on both sides of the comparison so a plain
+  // "mario kart world" still finds it.
+  function normalizeSearch(str) {
+    var s = String(str).toLowerCase();
+    if (s.normalize) s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return s.replace(/[™®©]/g, "").replace(/\s+/g, " ").trim();
+  }
+
   // ---------- Load data ----------
   els.win.innerHTML = '<p style="grid-column:1/-1;color:var(--text-muted);padding:40px 0;text-align:center;">Loading the archive…</p>';
 
@@ -74,6 +85,7 @@
     .then(function (data) {
       state.cats = data.cats;
       state.all = data.games;
+      state.searchIndex = state.all.map(function (g) { return normalizeSearch(g[1]); });
       els.countTotal.textContent = state.all.length.toLocaleString();
       buildChips();
       buildAzRail();
@@ -169,12 +181,12 @@
 
   // ---------- Filtering / sorting ----------
   function applyFilters() {
-    var q = state.query.trim().toLowerCase();
+    var q = normalizeSearch(state.query);
     var cats = state.activeCats;
     var out = [];
     for (var i = 0; i < state.all.length; i++) {
       var g = state.all[i];
-      if (q && g[1].toLowerCase().indexOf(q) === -1) continue;
+      if (q && state.searchIndex[i].indexOf(q) === -1) continue;
       if (cats.size > 0) {
         var match = false;
         var gc = g[4];
@@ -218,7 +230,7 @@
 
   // ---------- Virtualized rendering ----------
   function onResize() {
-    var width = els.scroller.clientWidth - 2;
+    var width = els.scroller.clientWidth - GRID_PAD * 2;
     var minTile = window.innerWidth < 640 ? 84 : 108;
     var cols = Math.max(2, Math.floor((width + GAP) / (minTile + GAP)));
     var tileWidth = (width - GAP * (cols - 1)) / cols;
