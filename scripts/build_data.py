@@ -66,15 +66,10 @@ def parse_release_date(display):
     return 0
 
 
-def fetch_nintendo_platform(platform_label, hits_per_page=1000):
-    """Queries Nintendo's own site-search index for a given platform label
-    (e.g. "Nintendo Switch 2"). Returns the raw list of hit dicts."""
-    params = urllib.parse.urlencode({
-        "hitsPerPage": hits_per_page,
-        "page": 0,
-        "analytics": "false",
-        "facetFilters": json.dumps([[f"platform:{platform_label}"]]),
-    })
+def _algolia_query(params_dict):
+    """Low-level POST to the Algolia multi-query endpoint. Returns the raw
+    parsed response for the (single) request we send."""
+    params = urllib.parse.urlencode(params_dict)
     body = json.dumps({"requests": [{"indexName": ALGOLIA_INDEX, "params": params}]}).encode("utf-8")
     req = urllib.request.Request(
         ALGOLIA_URL,
@@ -88,19 +83,62 @@ def fetch_nintendo_platform(platform_label, hits_per_page=1000):
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
         payload = json.load(resp)
-    hits = []
-    for result in payload.get("results", []):
-        hits.extend(result.get("hits", []))
-    return hits
+    return payload.get("results", [{}])[0]
+
+
+def discover_platform_facet_for_switch2():
+    """We don't actually know Nintendo's exact label for Switch 2 in this
+    index (could be "Nintendo Switch 2", could have a trademark symbol,
+    could be something else entirely) — rather than guess, ask Algolia for
+    the full breakdown of the 'platform' facet and pick whichever value
+    looks like Switch 2. Returns None if nothing matches."""
+    result = _algolia_query({
+        "hitsPerPage": 0,
+        "page": 0,
+        "analytics": "false",
+        "facets": json.dumps(["platform"]),
+    })
+    total = result.get("nbHits", 0)
+    facet_counts = result.get("facets", {}).get("platform", {})
+    print(f"Index sanity check: {total} total hits with no filter; platform facet values: {facet_counts}")
+
+    if not facet_counts:
+        print("WARNING: no 'platform' facet values returned at all — index name or request format may be wrong")
+        return None
+
+    candidates = [k for k in facet_counts if "switch" in k.lower() and "2" in k]
+    if not candidates:
+        print(f"WARNING: none of the platform values look like Switch 2: {list(facet_counts.keys())}")
+        return None
+
+    best = max(candidates, key=lambda k: facet_counts[k])
+    print(f"Using platform facet {best!r} ({facet_counts[best]} hits)")
+    return best
+
+
+def fetch_nintendo_platform(platform_label, hits_per_page=1000):
+    """Queries Nintendo's own site-search index for a given platform facet
+    value. Returns the raw list of hit dicts."""
+    result = _algolia_query({
+        "hitsPerPage": hits_per_page,
+        "page": 0,
+        "analytics": "false",
+        "facetFilters": json.dumps([[f"platform:{platform_label}"]]),
+    })
+    return result.get("hits", [])
 
 
 def switch2_supplement(existing_names):
     """Best-effort fetch of Switch 2 titles from Nintendo.com to backfill
-    what titledb is missing. Returns [] on any failure rather than breaking
+    what titledb is missing. Returns [] on any failure (or if we can't
+    confidently identify the right platform facet) rather than breaking
     the whole build — this is a supplement, not the primary source."""
     try:
-        hits = fetch_nintendo_platform("Nintendo Switch 2")
-        print(f"Nintendo.com search returned {len(hits)} Switch 2 hits")
+        platform_label = discover_platform_facet_for_switch2()
+        if not platform_label:
+            return []
+        hits = fetch_nintendo_platform(platform_label)
+        print(f"Nintendo.com search returned {len(hits)} hits for platform {platform_label!r}")
     except Exception as e:
         print(f"WARNING: Switch 2 supplement fetch failed, skipping it ({e})", file=sys.stderr)
         return []
