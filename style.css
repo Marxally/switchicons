@@ -364,7 +364,7 @@ body{
 #modal-icon{
   width:clamp(140px, min(42vw, 45vh), 300px);
   aspect-ratio:1/1;
-  border-radius:22%;
+  border-radius:14px;
   object-fit:cover;
   flex-shrink:0;
   background:var(--surface-2);
