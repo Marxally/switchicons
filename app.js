@@ -49,6 +49,10 @@
   };
 
   function iconUrl(hash) {
+    // titledb entries store just a hash fragment (shared prefix/suffix) to
+    // keep the dataset small; the Nintendo.com Switch 2 supplement stores
+    // full URLs directly since they don't share that pattern.
+    if (hash.indexOf("http") === 0) return hash;
     return ICON_PREFIX + hash + ICON_SUFFIX;
   }
 
