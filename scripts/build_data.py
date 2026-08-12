@@ -194,6 +194,13 @@ def switch2_supplement(existing_names):
         print("None of the known/guessed icon fields matched. Full keys on first hit:", sorted(sample.keys()))
         http_fields = {k: v for k, v in sample.items() if isinstance(v, str) and v.startswith("http")}
         print("All http(s)-looking string fields on first hit:", json.dumps(http_fields, indent=2))
+        # These field names look image-related from the key list but didn't
+        # pass the "starts with http" test — print their raw values (any
+        # type) so we can see whether they're relative paths, slugs, or
+        # nested objects that need different handling.
+        for candidate in ("productImage", "productImageSquare", "productGallery", "eshopDetails", "editions"):
+            if candidate in sample:
+                print(f"Raw value of {candidate!r}: {json.dumps(sample[candidate], indent=2, default=str)[:1000]}")
 
     out = []
     skipped_no_icon = 0
