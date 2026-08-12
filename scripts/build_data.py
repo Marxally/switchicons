@@ -73,15 +73,29 @@ def normalize_name(name):
     return s.strip()
 
 
-def parse_release_date(display):
+def parse_release_date(value):
     """Nintendo.com's releaseDateDisplay is usually ISO (YYYY-MM-DD) but is
-    sometimes fuzzy text like 'Early 2026' — return 0 for anything we can't
-    confidently parse rather than guess."""
-    if not display:
+    sometimes fuzzy text like 'Early 2026'. The plain 'releaseDate' field
+    (no 'Display') is sometimes instead a raw epoch timestamp. Handle both;
+    return 0 for anything we can't confidently parse rather than guess."""
+    if not value:
         return 0
-    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", str(display))
+    s = str(value)
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", s)
     if m:
         return int(m.group(1) + m.group(2) + m.group(3))
+    if s.isdigit():
+        num = int(s)
+        # Epoch millis vs seconds: a millis timestamp for any real date is
+        # a 13-digit number; seconds would be 10 digits.
+        try:
+            import datetime
+            ts = num / 1000 if num > 10**12 else num
+            dt = datetime.datetime.utcfromtimestamp(ts)
+            if 2015 <= dt.year <= 2035:
+                return dt.year * 10000 + dt.month * 100 + dt.day
+        except (ValueError, OSError, OverflowError):
+            pass
     return 0
 
 
@@ -297,15 +311,34 @@ def switch2_supplement(existing_names):
             skipped_dupe += 1
             continue
         existing_names.add(norm)  # guard against dupes within this same source too
-        publishers = h.get("publishers") or []
+
+        # This schema doesn't have 'publishers'/'genres' at all — that was
+        # me carrying over field names from the old games-only schema.
+        # The real fields here (confirmed against an actual hit's full key
+        # list) are 'softwarePublisher' (singular, plain string) and
+        # 'gameGenreLabels'/'gameGenres'.
+        publisher = h.get("softwarePublisher") or h.get("softwareDeveloper") or ""
+        if isinstance(publisher, list):
+            publisher = ", ".join(publisher)
+
+        genres = h.get("gameGenreLabels") or h.get("gameGenres") or []
+        if isinstance(genres, str):
+            genres = [genres]
+
+        date = parse_release_date(h.get("releaseDateDisplay")) or parse_release_date(h.get("releaseDate"))
+
         out.append({
             "id": "NCOM-" + (h.get("nsuid") or h.get("objectID") or norm),
             "name": name,
             "icon": icon,  # full URL, not a hash — app.js handles both forms
-            "pub": ", ".join(publishers) if publishers else "",
-            "cat": h.get("genres") or [],
-            "date": parse_release_date(h.get("releaseDateDisplay")),
+            "pub": publisher,
+            "cat": genres,
+            "date": date,
         })
+
+    if out:
+        sample = out[0]
+        print(f"Sample mapped entry: pub={sample['pub']!r} cat={sample['cat']!r} date={sample['date']!r}")
     print(f"Switch 2 supplement: added {len(out)}, skipped {skipped_dupe} dupes of titledb entries, {skipped_no_icon} with no boxart")
     return out
 
