@@ -214,6 +214,14 @@ def pick_icon_field(hit):
     for field in ("productImageSquare", "productImage"):
         val = hit.get(field)
         if isinstance(val, str) and val:
+            # productImageSquare comes back as an already-complete URL
+            # (Nintendo even bakes in q_auto/f_auto optimization params);
+            # productImage comes back as a bare Cloudinary public ID that
+            # needs the base prefixed. Blindly prefixing both was
+            # double-prefixing productImageSquare, producing a 404 with
+            # the base URL literally appearing twice in a row.
+            if val.startswith("http"):
+                return field, val
             return field, CLOUDINARY_BASE + val.lstrip("/")
 
     # Known full-URL-style fields from the older/games-only schema, in case
