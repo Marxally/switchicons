@@ -124,14 +124,42 @@ def discover_switch2_facet(url, api_key, facet_names=("platformCode", "platform"
     return None, None
 
 
-def fetch_by_facet(url, api_key, facet_name, value, hits_per_page=1000):
-    result = _index_query(url, api_key, {
-        "query": "",
-        "hitsPerPage": hits_per_page,
-        "page": 0,
-        "facetFilters": [[f"{facet_name}:{value}"]],
-    })
-    return result.get("hits", [])
+def fetch_by_facet(url, api_key, facet_name, value, hits_per_page=1000, max_pages=5):
+    """Paginates through all hits matching a facet filter (up to max_pages
+    safety cap)."""
+    all_hits = []
+    for page in range(max_pages):
+        result = _index_query(url, api_key, {
+            "query": "",
+            "hitsPerPage": hits_per_page,
+            "page": page,
+            "facetFilters": [[f"{facet_name}:{value}"]],
+        })
+        hits = result.get("hits", [])
+        all_hits.extend(hits)
+        if page >= result.get("nbPages", 1) - 1 or not hits:
+            break
+    return all_hits
+
+
+def pick_icon_field(hit):
+    """The 'store_all_products' index doesn't necessarily use 'boxart' the
+    way the old games-only index did (it covers hardware/merch too). Try
+    known field names first, then fall back to scanning every field for
+    anything that looks like a real image URL (starts with http, has an
+    image extension) — maximizes the chance of finding it without needing
+    another guess-and-check round trip."""
+    for field in ("boxart", "productImage", "image", "thumbnailImage", "heroImage", "cardImage"):
+        val = hit.get(field)
+        if isinstance(val, str) and val.startswith("http"):
+            return field, val
+
+    image_exts = (".jpg", ".jpeg", ".png", ".webp")
+    for key, val in hit.items():
+        if isinstance(val, str) and val.startswith("http") and any(ext in val.lower() for ext in image_exts):
+            return key, val
+
+    return None, None
 
 
 def switch2_supplement(existing_names):
@@ -156,11 +184,22 @@ def switch2_supplement(existing_names):
         print("Switch 2 supplement: no usable data found from any source, skipping")
         return []
 
+    field_counts = {}
+    for h in hits:
+        field, _ = pick_icon_field(h)
+        field_counts[field] = field_counts.get(field, 0) + 1
+    print(f"Icon field usage across {len(hits)} hits: {field_counts}")
+    if field_counts.get(None, 0) == len(hits):
+        sample = hits[0]
+        print("None of the known/guessed icon fields matched. Full keys on first hit:", sorted(sample.keys()))
+        http_fields = {k: v for k, v in sample.items() if isinstance(v, str) and v.startswith("http")}
+        print("All http(s)-looking string fields on first hit:", json.dumps(http_fields, indent=2))
+
     out = []
     skipped_no_icon = 0
     skipped_dupe = 0
     for h in hits:
-        icon = h.get("boxart")
+        _, icon = pick_icon_field(h)
         if not icon:
             skipped_no_icon += 1
             continue
