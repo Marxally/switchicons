@@ -147,6 +147,59 @@ def fetch_by_facet(url, api_key, facet_name, value, hits_per_page=1000, max_page
     return all_hits
 
 
+def _http_status(url, timeout=6):
+    """Actually hits a URL to check if it resolves. Only meaningful when
+    run somewhere with real internet access (e.g. GitHub Actions) — from a
+    sandboxed dev environment without access to Nintendo's CDN this will
+    just report the sandbox's own block, which is fine, it fails fast."""
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception as e:
+        return f"ERR:{type(e).__name__}"
+
+
+def verify_icon_urls(hits, sample_size=6):
+    """Some fraction of constructed icon URLs are coming back broken on
+    the live site despite the Cloudinary base being right for others —
+    rather than guess why, actually test a sample of real URLs (base
+    pattern, plus a few plausible variants for anything that fails) and
+    report exactly what works, broken down by which field it came from."""
+    by_field = {}
+    for h in hits:
+        field, icon = pick_icon_field(h)
+        if icon:
+            by_field.setdefault(field, []).append((h.get("title"), icon))
+
+    print("--- ICON URL VERIFICATION ---")
+    for field, items in by_field.items():
+        sample = items[:sample_size]
+        ok = 0
+        for title, url in sample:
+            status = _http_status(url)
+            if status == 200:
+                ok += 1
+                print(f"[{field}] OK ({status}) {title!r}")
+                continue
+            print(f"[{field}] FAIL ({status}) {title!r} -> {url}")
+            public_id = url[len(CLOUDINARY_BASE):]
+            variants = {
+                "+.jpg": CLOUDINARY_BASE + public_id + ".jpg",
+                "+.png": CLOUDINARY_BASE + public_id + ".png",
+                "f_auto/": CLOUDINARY_BASE + "f_auto/" + public_id,
+                "c_fill,w_512,h_512,f_auto/": CLOUDINARY_BASE + "c_fill,w_512,h_512,f_auto/" + public_id,
+            }
+            for label, vurl in variants.items():
+                vstatus = _http_status(vurl)
+                mark = "WORKS" if vstatus == 200 else str(vstatus)
+                print(f"    variant [{label}] {mark}")
+        print(f"[{field}] {ok}/{len(sample)} base URLs returned 200")
+    print("--- END ICON URL VERIFICATION ---")
+
+
 def pick_icon_field(hit):
     """'store_all_products_en_us' hits carry image references as bare
     Cloudinary public IDs (e.g. "store/software/switch2/.../<hash>"), not
@@ -219,6 +272,8 @@ def switch2_supplement(existing_names):
         for candidate in ("productImage", "productImageSquare", "productGallery", "eshopDetails", "editions"):
             if candidate in sample:
                 print(f"Raw value of {candidate!r}: {json.dumps(sample[candidate], indent=2, default=str)[:1000]}")
+    else:
+        verify_icon_urls(hits)
 
     out = []
     skipped_no_icon = 0
