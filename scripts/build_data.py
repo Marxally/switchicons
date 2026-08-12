@@ -51,6 +51,11 @@ OLD_INDEX_NAME = "ncom_game_en_us"
 OLD_INDEX_KEY = "6efbfb0f8f80defc44895018caf77504"
 OLD_INDEX_URL = f"https://{ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/{OLD_INDEX_NAME}/query"
 
+# Nintendo serves product imagery through a Cloudinary proxy at this base —
+# confirmed against real 'productImage'/'productImageSquare' values, which
+# are bare Cloudinary public IDs with no scheme/host/extension.
+CLOUDINARY_BASE = "https://assets.nintendo.com/image/upload/"
+
 
 def fetch_titledb(region):
     url = f"https://raw.githubusercontent.com/blawar/titledb/master/{region}.json"
@@ -143,17 +148,30 @@ def fetch_by_facet(url, api_key, facet_name, value, hits_per_page=1000, max_page
 
 
 def pick_icon_field(hit):
-    """The 'store_all_products' index doesn't necessarily use 'boxart' the
-    way the old games-only index did (it covers hardware/merch too). Try
-    known field names first, then fall back to scanning every field for
-    anything that looks like a real image URL (starts with http, has an
-    image extension) — maximizes the chance of finding it without needing
-    another guess-and-check round trip."""
-    for field in ("boxart", "productImage", "image", "thumbnailImage", "heroImage", "cardImage"):
+    """'store_all_products_en_us' hits carry image references as bare
+    Cloudinary public IDs (e.g. "store/software/switch2/.../<hash>"), not
+    full URLs — confirmed against a real hit where 'productImage' had such
+    a path and 'productImageSquare' was null. Nintendo serves these via
+    assets.nintendo.com's Cloudinary proxy (the same CDN pattern used for
+    the older API's 'boxart' field, e.g.
+    assets.nintendo.com/image/upload/ncom/en_US/games/switch/.../boxart).
+    Prefer the dedicated square variant when present, since that's the
+    closest match to an actual eShop icon; fall back to the general
+    product image otherwise."""
+    for field in ("productImageSquare", "productImage"):
+        val = hit.get(field)
+        if isinstance(val, str) and val:
+            return field, CLOUDINARY_BASE + val.lstrip("/")
+
+    # Known full-URL-style fields from the older/games-only schema, in case
+    # a hit ever carries them directly.
+    for field in ("boxart", "image", "thumbnailImage", "heroImage", "cardImage"):
         val = hit.get(field)
         if isinstance(val, str) and val.startswith("http"):
             return field, val
 
+    # Generic fallback: scan every field for anything that already looks
+    # like a full image URL.
     image_exts = (".jpg", ".jpeg", ".png", ".webp")
     for key, val in hit.items():
         if isinstance(val, str) and val.startswith("http") and any(ext in val.lower() for ext in image_exts):
